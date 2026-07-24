@@ -1,4 +1,4 @@
-# 🪟 WaybarWin
+# 🪟 WINbar
 
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue?style=for-the-badge&logo=windows" alt="Platform: Windows" />
@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License: MIT" />
 </p>
 
-An elegant, highly customizable, and fluid status bar for Windows inspired by Linux's **Waybar**. Built with **PyQt6** and integrated deeply with Windows native APIs, **WaybarWin** behaves like a native desktop appbar—reserving space on your screen and providing beautiful acrylic blur effects, live system monitoring, virtual desktop integration, and interactive widgets.
+An elegant, highly customizable, and fluid status bar for Windows inspired by Linux's **Waybar**. Built with **PyQt6** and integrated deeply with Windows native APIs, **WINbar** behaves like a native desktop appbar—reserving space on your screen and providing beautiful acrylic blur effects, live system monitoring, virtual desktop integration, and interactive widgets.
 
 ---
 
