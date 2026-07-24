@@ -23,6 +23,34 @@ An elegant, highly customizable, and fluid status bar for Windows inspired by Li
 
 ---
 
+## 📸 Screenshots
+
+### 🎵 Media Controller & Seekbar
+Interactive media player widget fetching real-time Windows SMTC data (artist, title, cover art) with an animated wave seekbar:
+<p align="center">
+  <img src="screenshots/media.png" alt="Media Player Widget" width="600"/>
+</p>
+
+### 📅 Calendar Widget & Loopable Video Player
+Clock hover popover featuring a complete iOS-style weekly calendar and a loopable circular video window:
+<p align="center">
+  <img src="screenshots/calendar.png" alt="Calendar Widget" width="600"/>
+</p>
+
+### 🌐 System Connection & Popups
+Glossy acrylic popup displaying current Wi-Fi/Ethernet network details and Bluetooth devices status:
+<p align="center">
+  <img src="screenshots/bluetooth.png" alt="Connection Status Widget" width="600"/>
+</p>
+
+### 🔍 App Launcher Search Dashboard
+Search dashboard to quickly query applications, run system commands (like lock screen, sleep, shutdown), and perform calculations:
+<p align="center">
+  <img src="screenshots/launcher.png" alt="App Launcher Widget" width="600"/>
+</p>
+
+---
+
 ## 🛠️ Tech Stack & Architecture
 
 WaybarWin is composed of several modular Python scripts:
