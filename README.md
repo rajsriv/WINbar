@@ -1,4 +1,4 @@
-# 🪟 WaybarWin
+# 🪟 WINbar
 
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue?style=for-the-badge&logo=windows" alt="Platform: Windows" />
@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License: MIT" />
 </p>
 
-An elegant, highly customizable, and fluid status bar for Windows inspired by Linux's **Waybar**. Built with **PyQt6** and integrated deeply with Windows native APIs, **WaybarWin** behaves like a native desktop appbar—reserving space on your screen and providing beautiful acrylic blur effects, live system monitoring, virtual desktop integration, and interactive widgets.
+An elegant, highly customizable, and fluid status bar for Windows inspired by Linux's **Waybar**. Built with **PyQt6** and integrated deeply with Windows native APIs, **WINbar** behaves like a native desktop appbar—reserving space on your screen and providing beautiful acrylic blur effects, live system monitoring, virtual desktop integration, and interactive widgets.
 
 ---
 
@@ -19,7 +19,6 @@ An elegant, highly customizable, and fluid status bar for Windows inspired by Li
 *   **🎵 Media Integration (SMTC):** Connects to Windows Global System Media Transport Controls (SMTC). Fetches real-time playback state, artist details, track title, and album art thumbnail. Includes an **interactive animated wave seekbar**!
 *   **📅 Dynamic Clock & Calendar Popup:** A clock widget that reveals a slick calendar dashboard with sliding animations on hover. Features a loopable circular video player.
 *   **📊 System Resource Monitor:** Real-time feedback on CPU and Memory (RAM) utilization.
-*   **🎨 CSS Theming System:** Includes a fully-customizable theme system supporting Dark and Light modes with custom QSS (Qt Stylesheets).
 *   **🎛️ Gesture-based Controls:**
     *   **Volume Adjustment:** Scroll your mouse wheel up/down over the volume icon capsule to adjust the Windows master system volume in 2% steps (via `pycaw`).
     *   **Brightness Adjustment:** Scroll your mouse wheel up/down anywhere over the main bar background area to dynamically adjust screen brightness in 5% steps (via PowerShell WMI bindings).
