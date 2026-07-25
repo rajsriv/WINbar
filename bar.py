@@ -1889,13 +1889,11 @@ class WaybarWindow(QMainWindow):
         startup_action.setCheckable(True)
         key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
         try:
-            result = subprocess.run(
-                ["schtasks", "/Query", "/TN", "WaybarWin"],
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                capture_output=True
-            )
-            startup_action.setChecked(result.returncode == 0)
-        except Exception:
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ)
+            winreg.QueryValueEx(key, "WaybarWin")
+            startup_action.setChecked(True)
+            winreg.CloseKey(key)
+        except OSError:
             startup_action.setChecked(False)
 
         menu.addSeparator()
@@ -1909,62 +1907,19 @@ class WaybarWindow(QMainWindow):
                     settings.setValue(f"displays/{name}", a.isChecked())
                     self.display_toggled.emit(name, a.isChecked())
         elif chosen == startup_action:
-            task_name = "WaybarWin"
             try:
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_WRITE)
                 if startup_action.isChecked():
                     if getattr(sys, "frozen", False):
-                        exe = sys.executable
-                        args = ""
+                        exe = f'"{sys.executable}"'
                     else:
                         pythonw = sys.executable.replace("python.exe", "pythonw.exe")
-                        exe = pythonw
-                        args = f'"{os.path.abspath("main.py")}"'
-                    
-                    # Create a scheduled task on login (no console, no UAC)
-                    xml = f"""<?xml version="1.0" encoding="UTF-16"?>
-<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
-  <Triggers>
-    <LogonTrigger>
-      <Enabled>true</Enabled>
-      <Delay>PT5S</Delay>
-    </LogonTrigger>
-  </Triggers>
-  <Principals>
-    <Principal>
-      <LogonType>InteractiveToken</LogonType>
-      <RunLevel>LeastPrivilege</RunLevel>
-    </Principal>
-  </Principals>
-  <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
-    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
-    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
-    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
-  </Settings>
-  <Actions>
-    <Exec>
-      <Command>{exe}</Command>
-      <Arguments>{args}</Arguments>
-    </Exec>
-  </Actions>
-</Task>"""
-                    import tempfile
-                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xml", mode="w", encoding="utf-16")
-                    tmp.write(xml)
-                    tmp.close()
-                    subprocess.run(
-                        ["schtasks", "/Create", "/TN", task_name, "/XML", tmp.name, "/F"],
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                        capture_output=True
-                    )
-                    os.unlink(tmp.name)
+                        exe = f'"{pythonw}" "{os.path.abspath("main.py")}"'
+                    winreg.SetValueEx(key, "WaybarWin", 0, winreg.REG_SZ, exe)
                 else:
-                    subprocess.run(
-                        ["schtasks", "/Delete", "/TN", task_name, "/F"],
-                        creationflags=subprocess.CREATE_NO_WINDOW,
-                        capture_output=True
-                    )
-            except Exception:
+                    winreg.DeleteValue(key, "WaybarWin")
+                winreg.CloseKey(key)
+            except OSError:
                 pass
         elif chosen == quit_action:
             QApplication.quit()
