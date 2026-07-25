@@ -1914,10 +1914,11 @@ class WaybarWindow(QMainWindow):
                 if startup_action.isChecked():
                     if getattr(sys, "frozen", False):
                         exe = sys.executable
+                        args = ""
                     else:
-                        # Use pythonw.exe (no console) with absolute path to main.py
                         pythonw = sys.executable.replace("python.exe", "pythonw.exe")
-                        exe = f'"{pythonw}" "{os.path.abspath("main.py")}"'
+                        exe = pythonw
+                        args = f'"{os.path.abspath("main.py")}"'
                     
                     # Create a scheduled task on login (no console, no UAC)
                     xml = f"""<?xml version="1.0" encoding="UTF-16"?>
@@ -1943,6 +1944,7 @@ class WaybarWindow(QMainWindow):
   <Actions>
     <Exec>
       <Command>{exe}</Command>
+      <Arguments>{args}</Arguments>
     </Exec>
   </Actions>
 </Task>"""
