@@ -74,6 +74,13 @@ Make sure you have **Python 3.10+** installed. You will also need standard build
 
 ### Installation
 
+#### Via WinGet (Recommended)
+You can install **WINbar** directly using the Windows Package Manager:
+```cmd
+winget install rajsriv.WINbar
+```
+
+#### From Source (Development)
 1. Clone this repository:
    ```bash
    git clone https://github.com/raj2005sriv/waybar-win.git
