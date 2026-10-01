@@ -1376,7 +1376,7 @@ class AppLauncherWidget(QWidget):
 
     def paintEvent(self, event):
         self.shadow_caster.setGeometry(0, 0, self.width(), self.height())
-        from PyQt6.QtGui import QPainter, QPainterPath, QColor, QPen, QLinearGradient
+        from PyQt6.QtGui import QPainter, QPainterPath, QColor, QPen, QRadialGradient
         from PyQt6.QtCore import QSettings
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
