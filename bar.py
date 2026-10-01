@@ -9,6 +9,7 @@ import threading
 import winreg
 import asyncio
 
+from config import load_config
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QLabel, QPushButton, QFrame, QGraphicsDropShadowEffect,
@@ -45,16 +46,28 @@ SEG = "font-family: 'Segoe MDL2 Assets';"
 
 import struct
 
-def enable_acrylic_blur(hwnd, is_light=False):
+def enable_acrylic_blur(hwnd, is_light=False, force=False):
     try:
         # Round the window corners natively in DWM (Windows 11)
-        # DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUND = 2
         import ctypes
+        from PyQt6.QtCore import QSettings
+        
         val = ctypes.c_int(2)
         ctypes.windll.dwmapi.DwmSetWindowAttribute(int(hwnd), 33, ctypes.byref(val), ctypes.sizeof(val))
+        
+        if not force:
+            settings = QSettings("WaybarWin", "Settings")
+            style = settings.value("popup_style", "popup", type=str)
+            if style in ["edgeBox", "edgeCurve"]:
+                import struct
+                # ACCENT_DISABLED = 0
+                policy = struct.pack("IIII", 0, 0, 0, 0)
+                attrib_data = struct.pack("IPI", 19, ctypes.cast(ctypes.c_char_p(policy), ctypes.c_void_p).value, len(policy))
+                ctypes.windll.user32.SetWindowCompositionAttribute(int(hwnd), attrib_data)
+                return # Disable blur globally for this mode!
 
         # ACCENT_ENABLE_BLURBEHIND = 3 (Aero blur)
-        # This provides a smooth, high-quality blur without blocky noise grids
+        import struct
         policy = struct.pack("IIII", 3, 0, 0, 0)
         attrib_data = struct.pack("IPI", 19, ctypes.cast(ctypes.c_char_p(policy), ctypes.c_void_p).value, len(policy))
         ctypes.windll.user32.SetWindowCompositionAttribute(int(hwnd), attrib_data)
@@ -560,6 +573,40 @@ class WaveSeekBar(QWidget):
         self.update()
 
 
+def draw_popup_background(widget, painter):
+    from PyQt6.QtGui import QPainterPath, QRadialGradient, QColor, QPen
+    from PyQt6.QtCore import QSettings
+    from theme import get_windows_accent_color, hex_to_qcolor
+    
+    r = widget.rect().adjusted(0, 0, -1, -1)
+    path = QPainterPath()
+    path.addRoundedRect(r.x(), r.y(), r.width(), r.height(), 12, 12)
+    
+    settings = QSettings("WaybarWin", "Settings")
+    style = settings.value("popup_style", "popup", type=str)
+    
+    if style in ["edgeBox", "edgeCurve"]:
+        painter.fillPath(path, QColor(0, 0, 0, 255)) # Opaque black base
+        
+        r_c, g_c, b_c = get_windows_accent_color()
+        progress = getattr(widget, '_glow_progress', 1.0)
+        max_radius = r.width() * 0.6
+        current_radius = max_radius * progress
+        
+        if current_radius > 0:
+            grad = QRadialGradient(r.width() / 2.0, 0, current_radius)
+            grad.setColorAt(0, QColor(r_c, g_c, b_c, int(100 * progress))) # Procedural top glow
+            grad.setColorAt(1, QColor(r_c, g_c, b_c, 0))  # Fade to fully transparent
+            painter.fillPath(path, grad)
+            
+        painter.setPen(QPen(QColor(45, 45, 45, 255), 1))
+        painter.drawPath(path)
+    else:
+        # We need to access global palette but it's not passed. 
+        # Since this function is in bar.py, we can access the global variable directly.
+        global palette
+        painter.fillPath(path, hex_to_qcolor(palette['capsule_bg']))
+
 class MediaPopupWidget(QWidget):
     def __init__(self, owner=None):
         super().__init__()
@@ -683,37 +730,40 @@ class MediaPopupWidget(QWidget):
 
     def paintEvent(self, event):
         import math
-        from PyQt6.QtGui import QPainter, QPainterPath, QColor
+        from PyQt6.QtGui import QPainter, QPainterPath, QColor, QPen
+        from PyQt6.QtCore import QSettings
+        
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         m = 5
         r = self.rect().adjusted(m, m, -m, -m)
         path = QPainterPath()
+        
+        settings = QSettings("WaybarWin", "Settings")
+        popup_style = settings.value("popup_style", "popup", type=str)
+        
         path.addRoundedRect(r.x(), r.y(), r.width(), r.height(), 12, 12)
+            
         painter.setClipPath(path)
-        if self._raw_pixmap and not self._raw_pixmap.isNull():
-            # Cover zoom preserving aspect ratio (no stretching)
-            scaled = self._raw_pixmap.scaled(
+        if popup_style not in ["edgeBox", "edgeCurve"] and hasattr(self, '_blurred_bg') and self._blurred_bg and not self._blurred_bg.isNull():
+            scaled = self._blurred_bg.scaled(
                 r.size(),
                 Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                 Qt.TransformationMode.SmoothTransformation
             )
-            small_blur = scaled.scaled(
-                24, 24,
-                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            final_blur = small_blur.scaled(
-                scaled.size(),
-                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            dx = (r.width() - final_blur.width()) // 2
-            dy = (r.height() - final_blur.height()) // 2
-            painter.drawPixmap(r.x() + dx, r.y() + dy, final_blur)
-            painter.fillRect(r, QColor(10, 12, 22, 170))
+            dx = (r.width() - scaled.width()) // 2
+            dy = (r.height() - scaled.height()) // 2
+            painter.drawPixmap(r.x() + dx, r.y() + dy, scaled)
+            painter.fillRect(r, QColor(10, 12, 22, 100))
         else:
-            painter.fillRect(r, QColor(28, 30, 42, 235))
+            if popup_style in ["edgeBox", "edgeCurve"]:
+                painter.fillRect(r, QColor(0, 0, 0, 255))
+            else:
+                painter.fillRect(r, QColor(28, 30, 42, 235))
+        
+        if popup_style in ["edgeBox", "edgeCurve"]:
+            painter.setPen(QPen(QColor(45, 45, 45, 255), 1))
+            painter.drawPath(path)
 
     def _on_dragging_seek(self, fraction):
         if hasattr(self, '_end') and self._end > 0:
@@ -772,6 +822,30 @@ class MediaPopupWidget(QWidget):
                 return
             pixmap = QPixmap.fromImage(image)
         self._raw_pixmap = pixmap
+        
+        # Pre-compute a high-quality, creamy Gaussian Blur and cache it!
+        try:
+            from PyQt6.QtWidgets import QGraphicsBlurEffect, QGraphicsScene, QGraphicsPixmapItem
+            from PyQt6.QtGui import QPainter
+            # Scale down slightly for performance, but not enough to pixelate
+            scaled_for_blur = pixmap.scaled(200, 200, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            
+            scene = QGraphicsScene()
+            item = QGraphicsPixmapItem(scaled_for_blur)
+            blur = QGraphicsBlurEffect()
+            blur.setBlurRadius(40) # Strong, silky Gaussian blur
+            item.setGraphicsEffect(blur)
+            scene.addItem(item)
+            
+            self._blurred_bg = QPixmap(scaled_for_blur.size())
+            self._blurred_bg.fill(Qt.GlobalColor.transparent)
+            ptr = QPainter(self._blurred_bg)
+            ptr.setRenderHint(QPainter.RenderHint.Antialiasing)
+            scene.render(ptr)
+            ptr.end()
+        except Exception:
+            self._blurred_bg = None
+            
         self.album_art.setPixmap(self._make_rounded_art(pixmap, self.album_art.size()))
         self.update()
 
@@ -865,8 +939,22 @@ class MediaWidget(QFrame):
         opacity_anim.setStartValue(0.0)
         opacity_anim.setEndValue(1.0)
 
+        from PyQt6.QtCore import QVariantAnimation
+        glow_anim = QVariantAnimation(self.popup)
+        glow_anim.setDuration(400)
+        glow_anim.setStartValue(0.0)
+        glow_anim.setEndValue(1.0)
+        
+        # Keep reference to avoid garbage collection
+        self.popup._glow_anim = glow_anim
+        def update_glow(val):
+            self.popup._glow_progress = val
+            self.popup.update()
+        glow_anim.valueChanged.connect(update_glow)
+
         self._anim_group.addAnimation(geom_anim)
         self._anim_group.addAnimation(opacity_anim)
+        self._anim_group.addAnimation(glow_anim)
         self._anim_group.start()
 
     def leaveEvent(self, event):
@@ -944,13 +1032,8 @@ class NetworkPopupWidget(QWidget):
         layout.addWidget(self.up_label)
 
     def paintEvent(self, event):
-        from PyQt6.QtGui import QPainter, QPainterPath
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = self.rect().adjusted(0, 0, -1, -1)
-        path = QPainterPath()
-        path.addRoundedRect(r.x(), r.y(), r.width(), r.height(), 12, 12)
-        painter.fillPath(path, hex_to_qcolor(palette['capsule_bg']))
+        from PyQt6.QtGui import QPainter
+        draw_popup_background(self, QPainter(self))
 
     def showEvent(self, event):
         is_light = (palette.get("name") == "Light")
@@ -1015,8 +1098,22 @@ class NetworkWidget(QFrame):
         opacity_anim.setStartValue(0.0)
         opacity_anim.setEndValue(1.0)
 
+        from PyQt6.QtCore import QVariantAnimation
+        glow_anim = QVariantAnimation(self.popup)
+        glow_anim.setDuration(400)
+        glow_anim.setStartValue(0.0)
+        glow_anim.setEndValue(1.0)
+        
+        # Keep reference to avoid garbage collection
+        self.popup._glow_anim = glow_anim
+        def update_glow(val):
+            self.popup._glow_progress = val
+            self.popup.update()
+        glow_anim.valueChanged.connect(update_glow)
+
         self._anim_group.addAnimation(geom_anim)
         self._anim_group.addAnimation(opacity_anim)
+        self._anim_group.addAnimation(glow_anim)
         self._anim_group.start()
 
     def leaveEvent(self, event):
@@ -1070,13 +1167,8 @@ class BluetoothPopupWidget(QWidget):
         self._layout.addLayout(self.device_layout)
 
     def paintEvent(self, event):
-        from PyQt6.QtGui import QPainter, QPainterPath
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        r = self.rect().adjusted(0, 0, -1, -1)
-        path = QPainterPath()
-        path.addRoundedRect(r.x(), r.y(), r.width(), r.height(), 12, 12)
-        painter.fillPath(path, hex_to_qcolor(palette['capsule_bg']))
+        from PyQt6.QtGui import QPainter
+        draw_popup_background(self, QPainter(self))
 
     def showEvent(self, event):
         is_light = (palette.get("name") == "Light")
@@ -1157,8 +1249,22 @@ class BluetoothWidget(QFrame):
         opacity_anim.setStartValue(0.0)
         opacity_anim.setEndValue(1.0)
 
+        from PyQt6.QtCore import QVariantAnimation
+        glow_anim = QVariantAnimation(self.popup)
+        glow_anim.setDuration(400)
+        glow_anim.setStartValue(0.0)
+        glow_anim.setEndValue(1.0)
+        
+        # Keep reference to avoid garbage collection
+        self.popup._glow_anim = glow_anim
+        def update_glow(val):
+            self.popup._glow_progress = val
+            self.popup.update()
+        glow_anim.valueChanged.connect(update_glow)
+
         self._anim_group.addAnimation(geom_anim)
         self._anim_group.addAnimation(opacity_anim)
+        self._anim_group.addAnimation(glow_anim)
         self._anim_group.start()
 
     def leaveEvent(self, event):
@@ -1270,27 +1376,45 @@ class AppLauncherWidget(QWidget):
 
     def paintEvent(self, event):
         self.shadow_caster.setGeometry(0, 0, self.width(), self.height())
-        from PyQt6.QtGui import QPainter, QPainterPath, QColor, QPen
+        from PyQt6.QtGui import QPainter, QPainterPath, QColor, QPen, QLinearGradient
+        from PyQt6.QtCore import QSettings
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
         # Draw to window boundaries to match system DWM rounded borders exactly
         r = self.rect().adjusted(0, 0, -1, -1)
         
+        settings = QSettings("WaybarWin", "Settings")
+        style = settings.value("popup_style", "popup", type=str)
         is_light = (palette.get("name") == "Light")
-        if is_light:
-            bg_color = QColor(240, 240, 240, 130) # Soft tint to blend the blur
-            border_color = QColor(0, 0, 0, 30)
-        else:
-            bg_color = QColor(20, 20, 20, 130) # Soft tint to blend the blur
-            border_color = QColor(255, 255, 255, 25)
-            
+        
         path = QPainterPath()
         path.addRoundedRect(r.x(), r.y(), r.width(), r.height(), 12, 12)
         
-        # Draw glass background
-        painter.fillPath(path, bg_color)
-        
+        if style in ["edgeBox", "edgeCurve"]:
+            painter.fillPath(path, QColor(0, 0, 0, 255)) # Opaque base
+            
+            from theme import get_windows_accent_color
+            r_c, g_c, b_c = get_windows_accent_color()
+            progress = getattr(self, '_glow_progress', 1.0)
+            max_radius = r.width() * 0.6
+            current_radius = max_radius * progress
+            if current_radius > 0:
+                bg_color = QRadialGradient(r.width() / 2.0, 0, current_radius)
+                bg_color.setColorAt(0, QColor(r_c, g_c, b_c, int(100 * progress)))
+                bg_color.setColorAt(1, QColor(r_c, g_c, b_c, 0))
+                painter.fillPath(path, bg_color)
+                
+            border_color = QColor(45, 45, 45, 255)
+        else:
+            if is_light:
+                bg_color = QColor(240, 240, 240, 130) # Soft tint to blend the blur
+                border_color = QColor(0, 0, 0, 30)
+            else:
+                bg_color = QColor(20, 20, 20, 130) # Soft tint to blend the blur
+                border_color = QColor(255, 255, 255, 25)
+            painter.fillPath(path, bg_color)
+            
         # Draw subtle border
         painter.setPen(QPen(border_color, 1))
         painter.drawPath(path)
@@ -1338,7 +1462,19 @@ class AppLauncherWidget(QWidget):
         self.on_search("")
         
         is_light = (palette.get("name") == "Light")
-        enable_acrylic_blur(self.winId(), is_light)
+        enable_acrylic_blur(self.winId(), is_light, force=True)
+
+        from PyQt6.QtCore import QVariantAnimation
+        self._glow_anim = QVariantAnimation(self)
+        self._glow_anim.setDuration(400)
+        self._glow_anim.setStartValue(0.0)
+        self._glow_anim.setEndValue(1.0)
+        self._glow_anim.valueChanged.connect(self._update_glow)
+        self._glow_anim.start()
+
+    def _update_glow(self, val):
+        self._glow_progress = val
+        self.update()
 
     def keyPressEvent(self, event):
         key = event.key()
@@ -1673,6 +1809,34 @@ def is_any_window_maximized_on_screen(self_hwnd):
 
 # ─── Main Window ──────────────────────────────────────────────────────────────
 
+class CornerWidget(QWidget):
+    def __init__(self, parent=None, is_left=True):
+        super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+        self.is_left = is_left
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.setFixedSize(12, 12)
+        
+    def paintEvent(self, event):
+        from PyQt6.QtGui import QPainter, QPainterPath, QColor
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Draw solid black square
+        painter.fillRect(0, 0, 12, 12, QColor(0, 0, 0, 255))
+        
+        # Switch to eraser mode and punch out the circle
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
+        
+        from PyQt6.QtCore import Qt
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 255))
+        
+        if self.is_left:
+            painter.drawEllipse(0, 0, 24, 24) # Center at (12, 12)
+        else:
+            painter.drawEllipse(-12, 0, 24, 24) # Center at (0, 12)
+
 class WaybarWindow(QMainWindow):
     display_toggled = pyqtSignal(str, bool)
 
@@ -1684,6 +1848,10 @@ class WaybarWindow(QMainWindow):
         self.is_hidden_for_fullscreen = False
         self.current_brightness = 50
         self._last_max_state = None
+        
+        self.left_corner = CornerWidget(self, is_left=True)
+        self.right_corner = CornerWidget(self, is_left=False)
+        
         self.bar_anim = QPropertyAnimation(self, b"geometry")
         self.bar_anim.setDuration(250)
         self.bar_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
@@ -1715,6 +1883,14 @@ class WaybarWindow(QMainWindow):
         # Check if any window is maximized on this screen
         is_maximized = is_any_window_maximized_on_screen(self.winId())
         
+        from PyQt6.QtCore import QSettings
+        settings = QSettings("WaybarWin", "Settings")
+        popup_style = settings.value("popup_style", "popup", type=str)
+        
+        if popup_style in ["edgeBox", "edgeCurve"]:
+            is_maximized = True
+
+        
         is_fs = False
         if hwnd:
             rect = wintypes.RECT()
@@ -1727,9 +1903,31 @@ class WaybarWindow(QMainWindow):
             )
             buf = ctypes.create_string_buffer(256)
             ctypes.windll.user32.GetClassNameA(hwnd, buf, 256)
-            if buf.value.decode("utf-8") in ("Progman", "WorkerW"):
+            class_name = buf.value.decode("utf-8")
+            if class_name in ("Progman", "WorkerW"):
                 is_fs = False
                 
+            title_buf = ctypes.create_string_buffer(512)
+            ctypes.windll.user32.GetWindowTextA(hwnd, title_buf, 512)
+            title_name = title_buf.value.decode("utf-8", errors="ignore")
+                
+            # Snipping Tool cloaks underlying windows, causing false floating state. Freeze state!
+            is_snipping = False
+            if class_name in ("ScreenClippingHostWindow", "SnippingTool", "Windows.UI.Core.CoreWindow"):
+                is_snipping = True
+            elif "Snipping Tool" in title_name or "Screen Snipping" in title_name or "Screen clipping" in title_name:
+                is_snipping = True
+                
+            if is_snipping:
+                is_fs = False
+                self._snipping_active = True
+                if hasattr(self, '_last_max_state') and self._last_max_state is not None:
+                    is_maximized = self._last_max_state
+            else:
+                if getattr(self, '_snipping_active', False):
+                    self._snipping_active = False
+                    self._last_max_state = None # Force a hard refresh of geometry and DWM attributes!
+                    
         if is_fs and not self.is_hidden_for_fullscreen:
             self.hide()
             self.is_hidden_for_fullscreen = True
@@ -1737,20 +1935,34 @@ class WaybarWindow(QMainWindow):
         elif not is_fs and self.is_hidden_for_fullscreen:
             self.show()
             self.is_hidden_for_fullscreen = False
+            # Force a hard refresh of DWM attributes because Windows 11 ruins them on show()
+            self._last_max_state = None
             
         self.set_maximized_style(is_maximized)
 
     def set_maximized_style(self, is_maximized):
         if not self.appbar:
             return
+            
+        geo = self.screen().geometry()
+            
         if hasattr(self, '_last_max_state') and self._last_max_state == is_maximized:
+            # Failsafe: Windows or interrupted animations might leave a 1px gap. Enforce it!
+            if is_maximized:
+                expected_geo = QRect(geo.x(), geo.y(), geo.width(), self.bar_height)
+                if self.geometry() != expected_geo:
+                    self.setGeometry(expected_geo)
+            else:
+                gap_x = 10
+                gap_y = 6
+                expected_geo = QRect(geo.x() + gap_x, geo.y() + gap_y, geo.width() - (gap_x * 2), self.bar_height)
+                if self.geometry() != expected_geo:
+                    self.setGeometry(expected_geo)
             return
             
         self.bar_anim.stop()
         first_run = (self._last_max_state is None)
         self._last_max_state = is_maximized
-        
-        geo = self.screen().geometry()
         
         if is_maximized:
             # Touch edges (no gap)
@@ -1765,6 +1977,21 @@ class WaybarWindow(QMainWindow):
             self.appbar.height = self.bar_height
             self.appbar.set_pos()
             
+            from PyQt6.QtCore import QSettings
+            settings = QSettings("WaybarWin", "Settings")
+            popup_style = settings.value("popup_style", "popup", type=str)
+            
+            if popup_style == "edgeCurve":
+                self.left_corner.setGeometry(target_x, target_y + self.bar_height, 12, 12)
+                self.right_corner.setGeometry(target_x + target_w - 12, target_y + self.bar_height, 12, 12)
+                self.left_corner.show()
+                self.right_corner.show()
+                self.left_corner.raise_()
+                self.right_corner.raise_()
+            else:
+                self.left_corner.hide()
+                self.right_corner.hide()
+            
             if first_run:
                 self.setGeometry(target_x, target_y, target_w, self.bar_height)
             else:
@@ -1773,6 +2000,9 @@ class WaybarWindow(QMainWindow):
                 self.bar_anim.start()
         else:
             # Floating form (maintain gap)
+            self.left_corner.hide()
+            self.right_corner.hide()
+            
             gap_x = 10
             gap_y = 6
             target_x = geo.x() + gap_x
@@ -1808,18 +2038,39 @@ class WaybarWindow(QMainWindow):
         self.main_layout = QGridLayout(central)
         self.main_layout.setContentsMargins(5, 0, 5, 0)
 
+        config = load_config()
+
+        # Widget mapping
+        # Note: AppLauncher requires a bit of special handling because it has a trigger widget.
+        self.app_launcher = AppLauncherWidget()
+        
+        from taskbar import TaskbarTriggerWidget
+        WIDGET_MAP = {
+            "clock": ClockWidget,
+            "workspaces": WorkspacesWidget,
+            "launcher": lambda: AppLauncherTriggerWidget(self.app_launcher),
+            "media": MediaWidget,
+            "system-monitor": SystemMonitorWidget,
+            "modules-right": ModulesRightWidget,
+            "taskbar": TaskbarTriggerWidget
+        }
+
+        # Dynamically load modules function
+        def populate_layout(layout, module_list):
+            for mod_name in module_list:
+                if mod_name in WIDGET_MAP:
+                    widget_instance = WIDGET_MAP[mod_name]()
+                    # Save reference dynamically so things like `self.modules_right.update_volume_status()` still work if it exists
+                    var_name = mod_name.replace("-", "_")
+                    setattr(self, var_name, widget_instance)
+                    layout.addWidget(widget_instance)
+
         # Left modules
         left_container = QWidget()
         left_layout = QHBoxLayout(left_container)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(15)
-        self.clock = ClockWidget()
-        self.workspaces = WorkspacesWidget()
-        self.app_launcher = AppLauncherWidget()
-        self.launcher_trigger = AppLauncherTriggerWidget(self.app_launcher)
-        left_layout.addWidget(self.clock)
-        left_layout.addWidget(self.workspaces)
-        left_layout.addWidget(self.launcher_trigger)
+        populate_layout(left_layout, config.get("modules-left", []))
         left_layout.addStretch()
         self.main_layout.addWidget(left_container, 0, 0, alignment=Qt.AlignmentFlag.AlignLeft)
 
@@ -1828,8 +2079,7 @@ class WaybarWindow(QMainWindow):
         center_layout = QHBoxLayout(center_container)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(5)
-        self.media = MediaWidget()
-        center_layout.addWidget(self.media)
+        populate_layout(center_layout, config.get("modules-center", []))
         self.main_layout.addWidget(center_container, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # Right modules
@@ -1837,10 +2087,7 @@ class WaybarWindow(QMainWindow):
         right_layout = QHBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(10)
-        self.sys_monitor = SystemMonitorWidget()
-        self.modules_right = ModulesRightWidget()
-        right_layout.addWidget(self.sys_monitor)
-        right_layout.addWidget(self.modules_right)
+        populate_layout(right_layout, config.get("modules-right", []))
         self.main_layout.addWidget(right_container, 0, 2, alignment=Qt.AlignmentFlag.AlignRight)
 
     def contextMenuEvent(self, event):
@@ -1884,6 +2131,36 @@ class WaybarWindow(QMainWindow):
             display_actions.append((act, name))
 
         menu.addSeparator()
+        
+        position_menu = menu.addMenu("Position")
+        pos_top_act = position_menu.addAction("Top")
+        pos_top_act.setCheckable(True)
+        pos_bottom_act = position_menu.addAction("Bottom")
+        pos_bottom_act.setCheckable(True)
+        
+        current_pos = settings.value("position", "Top", type=str)
+        if current_pos == "Bottom":
+            pos_bottom_act.setChecked(True)
+        else:
+            pos_top_act.setChecked(True)
+
+        style_menu = menu.addMenu("Style")
+        style_popup_act = style_menu.addAction("popup")
+        style_popup_act.setCheckable(True)
+        style_edgebox_act = style_menu.addAction("edgeBox")
+        style_edgebox_act.setCheckable(True)
+        style_edgecurve_act = style_menu.addAction("edgeCurve")
+        style_edgecurve_act.setCheckable(True)
+        
+        current_style = settings.value("popup_style", "popup", type=str)
+        if current_style == "edgeBox":
+            style_edgebox_act.setChecked(True)
+        elif current_style == "edgeCurve":
+            style_edgecurve_act.setChecked(True)
+        else:
+            style_popup_act.setChecked(True)
+
+        menu.addSeparator()
 
         startup_action = menu.addAction("Launch at startup")
         startup_action.setCheckable(True)
@@ -1906,6 +2183,19 @@ class WaybarWindow(QMainWindow):
                 if chosen == a:
                     settings.setValue(f"displays/{name}", a.isChecked())
                     self.display_toggled.emit(name, a.isChecked())
+        elif chosen == pos_top_act:
+            settings.setValue("position", "Top")
+        elif chosen == pos_bottom_act:
+            settings.setValue("position", "Bottom")
+        elif chosen == style_popup_act:
+            settings.setValue("popup_style", "popup")
+            self.apply_style_live()
+        elif chosen == style_edgebox_act:
+            settings.setValue("popup_style", "edgeBox")
+            self.apply_style_live()
+        elif chosen == style_edgecurve_act:
+            settings.setValue("popup_style", "edgeCurve")
+            self.apply_style_live()
         elif chosen == startup_action:
             try:
                 key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_WRITE)
@@ -1923,6 +2213,32 @@ class WaybarWindow(QMainWindow):
                 pass
         elif chosen == quit_action:
             QApplication.quit()
+
+    def apply_style_live(self):
+        from theme import get_theme
+        global palette, theme_stylesheet
+        palette, theme_stylesheet = get_theme()
+        
+        # Apply updated stylesheet globally
+        QApplication.instance().setStyleSheet(theme_stylesheet)
+        
+        # Update blur and trigger repaints for all windows
+        is_light = (palette.get("name") == "Light")
+        for widget in QApplication.topLevelWidgets():
+            # Skip corner wedges because disabling blur destroys their WA_TranslucentBackground
+            if widget.inherits("CornerWidget"):
+                widget.update()
+                continue
+                
+            if hasattr(widget, 'winId'):
+                # Force blur on AppLauncher
+                force = widget.inherits("AppLauncherWidget")
+                enable_acrylic_blur(widget.winId(), is_light, force=force)
+            widget.update()
+            
+        # Force geometry to update (add/remove gaps and corners)
+        self._last_max_state = None
+        self.check_fullscreen()
 
     def showEvent(self, event):
         is_light = (palette.get("name") == "Light")
@@ -1954,6 +2270,7 @@ class WaybarWindow(QMainWindow):
             key = VK_VOLUME_UP if delta > 0 else VK_VOLUME_DOWN
             ctypes.windll.user32.keybd_event(key, 0, 0, 0)
             ctypes.windll.user32.keybd_event(key, 0, 2, 0)
-            self.modules_right.update_volume_status()
+            if hasattr(self, 'modules_right'):
+                self.modules_right.update_volume_status()
 
         super().wheelEvent(event)

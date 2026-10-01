@@ -49,6 +49,20 @@ LIGHT_PALETTE = {
     "sys_chart_fill": "rgba(0, 0, 0, 30)"
 }
 
+def get_windows_accent_color():
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Microsoft\Windows\DWM')
+        val, _ = winreg.QueryValueEx(key, 'ColorizationColor')
+        winreg.CloseKey(key)
+        
+        r = (val >> 16) & 0xFF
+        g = (val >> 8) & 0xFF
+        b = val & 0xFF
+        return r, g, b
+    except:
+        return 0, 120, 212
+
 def hex_to_qcolor(hex_str):
     if hex_str.startswith("rgba"):
         import re
@@ -168,9 +182,19 @@ QFrame {{
 """
 
 def get_theme():
+    from config import load_style
+    custom_style = load_style()
     settings = QSettings("WaybarWin", "Settings")
     theme_name = settings.value("theme", "Dark", type=str)
+    popup_style = settings.value("popup_style", "popup", type=str)
     
     if theme_name == "Light":
-        return LIGHT_PALETTE, get_theme_stylesheet(LIGHT_PALETTE)
-    return DARK_PALETTE, get_theme_stylesheet(DARK_PALETTE)
+        pal = dict(LIGHT_PALETTE)
+    else:
+        pal = dict(DARK_PALETTE)
+        
+    if popup_style in ["edgeBox", "edgeCurve"]:
+        pal["bg_bar"] = "rgba(0, 0, 0, 1.0)"
+        pal["capsule_bg"] = "rgba(0, 0, 0, 1.0)"
+        
+    return pal, get_theme_stylesheet(pal) + "\n" + custom_style
