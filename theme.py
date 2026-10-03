@@ -1,4 +1,4 @@
-from PyQt6.QtCore import QSettings
+from config import load_config
 from PyQt6.QtGui import QColor
 
 DARK_PALETTE = {
@@ -184,9 +184,9 @@ QFrame {{
 def get_theme():
     from config import load_style
     custom_style = load_style()
-    settings = QSettings("WaybarWin", "Settings")
-    theme_name = settings.value("theme", "Dark", type=str)
-    popup_style = settings.value("popup_style", "popup", type=str)
+    config = load_config()
+    theme_name = config.get("style", {}).get("theme", "Dark")
+    popup_style = config.get("style", {}).get("popup_style", "popup")
     
     if theme_name == "Light":
         pal = dict(LIGHT_PALETTE)

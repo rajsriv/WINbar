@@ -3,7 +3,7 @@ from ctypes import wintypes
 import psutil
 import time
 
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFrame, QLabel, QPushButton, QScrollArea
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QFrame, QLabel, QPushButton, QScrollArea, QApplication
 from PyQt6.QtCore import Qt, pyqtSignal, QThread, QFileInfo, QTimer, QPropertyAnimation, QParallelAnimationGroup, QEasingCurve, QRect
 from PyQt6.QtGui import QPainter, QPainterPath, QPen, QColor, QRegion
 from PyQt6.QtWidgets import QFileIconProvider
@@ -154,9 +154,9 @@ class TaskbarPopupWidget(QWidget):
         self.icon_provider = QFileIconProvider()
         
     def showEvent(self, event):
-        from PyQt6.QtCore import QSettings
-        settings = QSettings("WaybarWin", "Settings")
-        popup_style = settings.value("popup_style", "popup", type=str)
+        from config import load_config
+        config = load_config()
+        popup_style = config.get("style", {}).get("popup_style", "popup")
         
         if popup_style != "edgeBox":
             try:
@@ -269,15 +269,15 @@ class TaskbarPopupWidget(QWidget):
         else:
             super().wheelEvent(event)
     def paintEvent(self, event):
-        from PyQt6.QtCore import QSettings
-        settings = QSettings("WaybarWin", "Settings")
-        popup_style = settings.value("popup_style", "popup", type=str)
+        from config import load_config
+        config = load_config()
+        popup_style = config.get("style", {}).get("popup_style", "popup")
         
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
         if popup_style in ["edgeBox", "edgeCurve"]:
-            bg_color = QColor(0, 0, 0, 255)
+            bg_color = hex_to_qcolor(palette['capsule_bg'])
             border_color = QColor(45, 45, 45, 255)
         else:
             if palette["name"] == "Dark":
@@ -337,23 +337,62 @@ class TaskbarTriggerWidget(QFrame):
             
         if not self.popup.isVisible():
             global_center = self.mapToGlobal(self.rect().center())
+            current_screen = QApplication.screenAt(global_center)
+            if not current_screen:
+                current_screen = QApplication.primaryScreen()
+            screen_geo = current_screen.availableGeometry()
             
-            # Update geometry to get actual height before animation
             self.popup.adjustSize()
             popup_w = self.popup.width()
             popup_h = self.popup.height()
-
-            target_x = global_center.x() - (popup_w // 2)
             
-            # Float it perfectly below the bar
-            target_y = self.window().geometry().bottom() + 5
+            print(f"Taskbar Popup size: {popup_w}x{popup_h}")
+
+            from config import load_config
+            position = load_config().get("general", {}).get("position", "top").lower()
+
+            if position == "left":
+                target_x = screen_geo.left() + 8
+                target_y = global_center.y() - (popup_h // 2)
+                start_x = target_x - 15
+                start_y = target_y
+            elif position == "right":
+                target_x = screen_geo.right() - 8 - popup_w
+                target_y = global_center.y() - (popup_h // 2)
+                start_x = target_x + 15
+                start_y = target_y
+            elif position == "bottom":
+                target_y = screen_geo.bottom() - 8 - popup_h
+                target_x = global_center.x() - (popup_w // 2)
+                start_y = target_y + 15
+                start_x = target_x
+            else:
+                target_y = screen_geo.top() + 8
+                target_x = global_center.x() - (popup_w // 2)
+                start_y = target_y - 15
+                start_x = target_x
+
+            if target_x + popup_w > screen_geo.right() - 10:
+                target_x = screen_geo.right() - popup_w - 10
+            if target_x < screen_geo.left() + 10:
+                target_x = screen_geo.left() + 10
+            if target_y + popup_h > screen_geo.bottom() - 10:
+                target_y = screen_geo.bottom() - popup_h - 10
+            if target_y < screen_geo.top() + 10:
+                target_y = screen_geo.top() + 10
+                
+            if position in ["left", "right"]:
+                start_y = target_y
+            else:
+                start_x = target_x
+                
+            print(f"Taskbar Popup positioning - Position: {position}, Target: {target_x},{target_y}, Start: {start_x},{start_y}")
 
             self._anim_group.clear()
             geom_anim = QPropertyAnimation(self.popup, b"geometry")
             geom_anim.setDuration(250)
             
-            start_y = target_y - 15
-            geom_anim.setStartValue(QRect(target_x, start_y, popup_w, popup_h))
+            geom_anim.setStartValue(QRect(start_x, start_y, popup_w, popup_h))
             geom_anim.setEndValue(QRect(target_x, target_y, popup_w, popup_h))
             geom_anim.setEasingCurve(QEasingCurve.Type.OutBack)
             
@@ -387,8 +426,21 @@ class TaskbarTriggerWidget(QFrame):
         geom_anim = QPropertyAnimation(self.popup, b"geometry")
         geom_anim.setDuration(200)
         geom_anim.setStartValue(current_rect)
-        # Match Media popup by sliding up and fading out
-        geom_anim.setEndValue(QRect(current_rect.x(), current_rect.y() - 15, current_rect.width(), current_rect.height()))
+        
+        from config import load_config
+        position = load_config().get("general", {}).get("position", "top").lower()
+        
+        end_rect = QRect(current_rect)
+        if position == "left":
+            end_rect.moveLeft(current_rect.x() - 15)
+        elif position == "right":
+            end_rect.moveLeft(current_rect.x() + 15)
+        elif position == "bottom":
+            end_rect.moveTop(current_rect.y() + 15)
+        else:
+            end_rect.moveTop(current_rect.y() - 15)
+            
+        geom_anim.setEndValue(end_rect)
         geom_anim.setEasingCurve(QEasingCurve.Type.InBack)
         
         opacity_anim = QPropertyAnimation(self.popup, b"windowOpacity")

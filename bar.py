@@ -50,14 +50,14 @@ def enable_acrylic_blur(hwnd, is_light=False, force=False):
     try:
         # Round the window corners natively in DWM (Windows 11)
         import ctypes
-        from PyQt6.QtCore import QSettings
+        from config import load_config
         
         val = ctypes.c_int(2)
         ctypes.windll.dwmapi.DwmSetWindowAttribute(int(hwnd), 33, ctypes.byref(val), ctypes.sizeof(val))
         
         if not force:
-            settings = QSettings("WaybarWin", "Settings")
-            style = settings.value("popup_style", "popup", type=str)
+            config = load_config()
+            style = config.get("style", {}).get("popup_style", "popup")
             if style in ["edgeBox", "edgeCurve"]:
                 import struct
                 # ACCENT_DISABLED = 0
@@ -312,21 +312,55 @@ class ClockWidget(QFrame):
             self.popup.update_calendar()
 
     def enterEvent(self, event):
-        pos = self.mapToGlobal(self.rect().bottomLeft())
-        popup_width = self.popup.sizeHint().width()
-        popup_height = self.popup.sizeHint().height()
-        x_offset = (self.width() - popup_width) // 2
+        from PyQt6.QtGui import QCursor
+        mouse_pos = QCursor.pos()
+        current_screen = QApplication.screenAt(mouse_pos)
+        if not current_screen:
+            current_screen = QApplication.primaryScreen()
+        screen_geo = current_screen.availableGeometry()
 
-        target_x = pos.x() + x_offset
-        screen = QApplication.primaryScreen().availableGeometry()
-        if target_x + popup_width > screen.right():
-            target_x = screen.right() - popup_width - 10
-        if target_x < screen.left():
-            target_x = screen.left() + 10
+        self.popup.adjustSize()
+        popup_w = self.popup.sizeHint().width() if hasattr(self.popup, 'sizeHint') else self.popup.width()
+        popup_h = self.popup.sizeHint().height() if hasattr(self.popup, 'sizeHint') else self.popup.height()
 
-        main_bottom = self.window().geometry().bottom()
-        target_y = main_bottom + 5
-        start_y = target_y - 15
+        from config import load_config
+        config = load_config()
+        position = config.get("general", {}).get("position", "top").lower()
+
+        if position == "left":
+            target_x = screen_geo.left() + 8
+            target_y = mouse_pos.y() - (popup_h // 2)
+            start_x = target_x - 15
+            start_y = target_y
+        elif position == "right":
+            target_x = screen_geo.right() - 8 - popup_w
+            target_y = mouse_pos.y() - (popup_h // 2)
+            start_x = target_x + 15
+            start_y = target_y
+        elif position == "bottom":
+            target_y = screen_geo.bottom() - 8 - popup_h
+            target_x = mouse_pos.x() - (popup_w // 2)
+            start_y = target_y + 15
+            start_x = target_x
+        else:
+            target_y = screen_geo.top() + 8
+            target_x = mouse_pos.x() - (popup_w // 2)
+            start_y = target_y - 15
+            start_x = target_x
+
+        if target_x + popup_w > screen_geo.right() - 10:
+            target_x = screen_geo.right() - popup_w - 10
+        if target_x < screen_geo.left() + 10:
+            target_x = screen_geo.left() + 10
+        if target_y + popup_h > screen_geo.bottom() - 10:
+            target_y = screen_geo.bottom() - popup_h - 10
+        if target_y < screen_geo.top() + 10:
+            target_y = screen_geo.top() + 10
+            
+        if position in ["left", "right"]:
+            start_y = target_y
+        else:
+            start_x = target_x
 
         self.popup.show()
 
@@ -334,8 +368,8 @@ class ClockWidget(QFrame):
 
         geom_anim = QPropertyAnimation(self.popup, b"geometry")
         geom_anim.setDuration(200)
-        geom_anim.setStartValue(QRect(target_x, start_y, popup_width, popup_height))
-        geom_anim.setEndValue(QRect(target_x, target_y, popup_width, popup_height))
+        geom_anim.setStartValue(QRect(start_x, start_y, popup_w, popup_h))
+        geom_anim.setEndValue(QRect(target_x, target_y, popup_w, popup_h))
         geom_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         opacity_anim = QPropertyAnimation(self.popup, b"windowOpacity")
@@ -575,18 +609,19 @@ class WaveSeekBar(QWidget):
 
 def draw_popup_background(widget, painter):
     from PyQt6.QtGui import QPainterPath, QRadialGradient, QColor, QPen
-    from PyQt6.QtCore import QSettings
+    from config import load_config
     from theme import get_windows_accent_color, hex_to_qcolor
+    global palette
     
     r = widget.rect().adjusted(0, 0, -1, -1)
     path = QPainterPath()
     path.addRoundedRect(r.x(), r.y(), r.width(), r.height(), 12, 12)
     
-    settings = QSettings("WaybarWin", "Settings")
-    style = settings.value("popup_style", "popup", type=str)
+    config = load_config()
+    style = config.get("style", {}).get("popup_style", "popup")
     
     if style in ["edgeBox", "edgeCurve"]:
-        painter.fillPath(path, QColor(0, 0, 0, 255)) # Opaque black base
+        painter.fillPath(path, hex_to_qcolor(palette['capsule_bg'])) # Opaque black base
         
         r_c, g_c, b_c = get_windows_accent_color()
         progress = getattr(widget, '_glow_progress', 1.0)
@@ -604,7 +639,6 @@ def draw_popup_background(widget, painter):
     else:
         # We need to access global palette but it's not passed. 
         # Since this function is in bar.py, we can access the global variable directly.
-        global palette
         painter.fillPath(path, hex_to_qcolor(palette['capsule_bg']))
 
 class MediaPopupWidget(QWidget):
@@ -731,7 +765,7 @@ class MediaPopupWidget(QWidget):
     def paintEvent(self, event):
         import math
         from PyQt6.QtGui import QPainter, QPainterPath, QColor, QPen
-        from PyQt6.QtCore import QSettings
+        from config import load_config
         
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -739,8 +773,8 @@ class MediaPopupWidget(QWidget):
         r = self.rect().adjusted(m, m, -m, -m)
         path = QPainterPath()
         
-        settings = QSettings("WaybarWin", "Settings")
-        popup_style = settings.value("popup_style", "popup", type=str)
+        config = load_config()
+        popup_style = config.get("style", {}).get("popup_style", "popup")
         
         path.addRoundedRect(r.x(), r.y(), r.width(), r.height(), 12, 12)
             
@@ -757,7 +791,7 @@ class MediaPopupWidget(QWidget):
             painter.fillRect(r, QColor(10, 12, 22, 100))
         else:
             if popup_style in ["edgeBox", "edgeCurve"]:
-                painter.fillRect(r, QColor(0, 0, 0, 255))
+                painter.fillRect(r, hex_to_qcolor(palette['capsule_bg']))
             else:
                 painter.fillRect(r, QColor(28, 30, 42, 235))
         
@@ -895,32 +929,56 @@ class MediaWidget(QFrame):
         self.label.setText(f"{icon} {elided}")
 
     def enterEvent(self, event):
-        global_center = self.mapToGlobal(self.rect().center())
-        current_screen = QApplication.screenAt(global_center)
+        from PyQt6.QtGui import QCursor
+        mouse_pos = QCursor.pos()
+        current_screen = QApplication.screenAt(mouse_pos)
         if not current_screen:
-            current_screen = self.window().screen()
+            current_screen = QApplication.primaryScreen()
         screen_geo = current_screen.availableGeometry()
 
         self.popup.adjustSize()
-        popup_w = self.popup.width()
-        popup_h = self.popup.height()
+        popup_w = self.popup.sizeHint().width() if hasattr(self.popup, 'sizeHint') else self.popup.width()
+        popup_h = self.popup.sizeHint().height() if hasattr(self.popup, 'sizeHint') else self.popup.height()
 
-        target_x = global_center.x() - (popup_w // 2)
+        from config import load_config
+        config = load_config()
+        position = config.get("general", {}).get("position", "top").lower()
+
+        if position == "left":
+            target_x = screen_geo.left() + 8
+            target_y = mouse_pos.y() - (popup_h // 2)
+            start_x = target_x - 15
+            start_y = target_y
+        elif position == "right":
+            target_x = screen_geo.right() - 8 - popup_w
+            target_y = mouse_pos.y() - (popup_h // 2)
+            start_x = target_x + 15
+            start_y = target_y
+        elif position == "bottom":
+            target_y = screen_geo.bottom() - 8 - popup_h
+            target_x = mouse_pos.x() - (popup_w // 2)
+            start_y = target_y + 15
+            start_x = target_x
+        else:
+            target_y = screen_geo.top() + 8
+            target_x = mouse_pos.x() - (popup_w // 2)
+            start_y = target_y - 15
+            start_x = target_x
+
         if target_x + popup_w > screen_geo.right() - 10:
             target_x = screen_geo.right() - popup_w - 10
         if target_x < screen_geo.left() + 10:
             target_x = screen_geo.left() + 10
-
-        main_bottom = self.window().geometry().bottom()
-        target_y = main_bottom
         if target_y + popup_h > screen_geo.bottom() - 10:
-            pos_top = self.mapToGlobal(self.rect().topLeft())
-            if pos_top.y() - popup_h - 5 >= screen_geo.top() + 10:
-                target_y = pos_top.y() - popup_h - 5
-            else:
-                target_y = screen_geo.bottom() - popup_h - 10
+            target_y = screen_geo.bottom() - popup_h - 10
+        if target_y < screen_geo.top() + 10:
+            target_y = screen_geo.top() + 10
+            
+        if position in ["left", "right"]:
+            start_y = target_y
+        else:
+            start_x = target_x
 
-        start_y = target_y - 15
         self.popup.show()
         self.popup.raise_()
 
@@ -930,7 +988,7 @@ class MediaWidget(QFrame):
 
         geom_anim = QPropertyAnimation(self.popup, b"geometry")
         geom_anim.setDuration(200)
-        geom_anim.setStartValue(QRect(target_x, start_y, popup_w, popup_h))
+        geom_anim.setStartValue(QRect(start_x, start_y, popup_w, popup_h))
         geom_anim.setEndValue(QRect(target_x, target_y, popup_w, popup_h))
         geom_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
@@ -1061,25 +1119,56 @@ class NetworkWidget(QFrame):
         self.popup.up_label.setText(f"Up: {up:.1f} KB/s")
 
     def enterEvent(self, event):
-        global_center = self.mapToGlobal(self.rect().center())
-        current_screen = QApplication.screenAt(global_center)
+        from PyQt6.QtGui import QCursor
+        mouse_pos = QCursor.pos()
+        current_screen = QApplication.screenAt(mouse_pos)
         if not current_screen:
-            current_screen = self.window().screen()
+            current_screen = QApplication.primaryScreen()
         screen_geo = current_screen.availableGeometry()
 
         self.popup.adjustSize()
-        popup_w = self.popup.width()
-        popup_h = self.popup.height()
-        target_x = global_center.x() - (popup_w // 2)
+        popup_w = self.popup.sizeHint().width() if hasattr(self.popup, 'sizeHint') else self.popup.width()
+        popup_h = self.popup.sizeHint().height() if hasattr(self.popup, 'sizeHint') else self.popup.height()
+
+        from config import load_config
+        config = load_config()
+        position = config.get("general", {}).get("position", "top").lower()
+
+        if position == "left":
+            target_x = screen_geo.left() + 8
+            target_y = mouse_pos.y() - (popup_h // 2)
+            start_x = target_x - 15
+            start_y = target_y
+        elif position == "right":
+            target_x = screen_geo.right() - 8 - popup_w
+            target_y = mouse_pos.y() - (popup_h // 2)
+            start_x = target_x + 15
+            start_y = target_y
+        elif position == "bottom":
+            target_y = screen_geo.bottom() - 8 - popup_h
+            target_x = mouse_pos.x() - (popup_w // 2)
+            start_y = target_y + 15
+            start_x = target_x
+        else:
+            target_y = screen_geo.top() + 8
+            target_x = mouse_pos.x() - (popup_w // 2)
+            start_y = target_y - 15
+            start_x = target_x
 
         if target_x + popup_w > screen_geo.right() - 10:
             target_x = screen_geo.right() - popup_w - 10
         if target_x < screen_geo.left() + 10:
             target_x = screen_geo.left() + 10
+        if target_y + popup_h > screen_geo.bottom() - 10:
+            target_y = screen_geo.bottom() - popup_h - 10
+        if target_y < screen_geo.top() + 10:
+            target_y = screen_geo.top() + 10
+            
+        if position in ["left", "right"]:
+            start_y = target_y
+        else:
+            start_x = target_x
 
-        main_bottom = self.window().geometry().bottom()
-        target_y = main_bottom + 5
-        start_y = target_y - 15
         self.popup.show()
         self.popup.raise_()
 
@@ -1089,7 +1178,7 @@ class NetworkWidget(QFrame):
 
         geom_anim = QPropertyAnimation(self.popup, b"geometry")
         geom_anim.setDuration(200)
-        geom_anim.setStartValue(QRect(target_x, start_y, popup_w, popup_h))
+        geom_anim.setStartValue(QRect(start_x, start_y, popup_w, popup_h))
         geom_anim.setEndValue(QRect(target_x, target_y, popup_w, popup_h))
         geom_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
@@ -1212,25 +1301,56 @@ class BluetoothWidget(QFrame):
         self.popup.adjustSize()
 
     def enterEvent(self, event):
-        global_center = self.mapToGlobal(self.rect().center())
-        current_screen = QApplication.screenAt(global_center)
+        from PyQt6.QtGui import QCursor
+        mouse_pos = QCursor.pos()
+        current_screen = QApplication.screenAt(mouse_pos)
         if not current_screen:
-            current_screen = self.window().screen()
+            current_screen = QApplication.primaryScreen()
         screen_geo = current_screen.availableGeometry()
 
         self.popup.adjustSize()
-        popup_w = self.popup.width()
-        popup_h = self.popup.height()
-        target_x = global_center.x() - (popup_w // 2)
+        popup_w = self.popup.sizeHint().width() if hasattr(self.popup, 'sizeHint') else self.popup.width()
+        popup_h = self.popup.sizeHint().height() if hasattr(self.popup, 'sizeHint') else self.popup.height()
+
+        from config import load_config
+        config = load_config()
+        position = config.get("general", {}).get("position", "top").lower()
+
+        if position == "left":
+            target_x = screen_geo.left() + 8
+            target_y = mouse_pos.y() - (popup_h // 2)
+            start_x = target_x - 15
+            start_y = target_y
+        elif position == "right":
+            target_x = screen_geo.right() - 8 - popup_w
+            target_y = mouse_pos.y() - (popup_h // 2)
+            start_x = target_x + 15
+            start_y = target_y
+        elif position == "bottom":
+            target_y = screen_geo.bottom() - 8 - popup_h
+            target_x = mouse_pos.x() - (popup_w // 2)
+            start_y = target_y + 15
+            start_x = target_x
+        else:
+            target_y = screen_geo.top() + 8
+            target_x = mouse_pos.x() - (popup_w // 2)
+            start_y = target_y - 15
+            start_x = target_x
 
         if target_x + popup_w > screen_geo.right() - 10:
             target_x = screen_geo.right() - popup_w - 10
         if target_x < screen_geo.left() + 10:
             target_x = screen_geo.left() + 10
+        if target_y + popup_h > screen_geo.bottom() - 10:
+            target_y = screen_geo.bottom() - popup_h - 10
+        if target_y < screen_geo.top() + 10:
+            target_y = screen_geo.top() + 10
+            
+        if position in ["left", "right"]:
+            start_y = target_y
+        else:
+            start_x = target_x
 
-        main_bottom = self.window().geometry().bottom()
-        target_y = main_bottom + 5
-        start_y = target_y - 15
         self.popup.show()
         self.popup.raise_()
 
@@ -1240,7 +1360,7 @@ class BluetoothWidget(QFrame):
 
         geom_anim = QPropertyAnimation(self.popup, b"geometry")
         geom_anim.setDuration(200)
-        geom_anim.setStartValue(QRect(target_x, start_y, popup_w, popup_h))
+        geom_anim.setStartValue(QRect(start_x, start_y, popup_w, popup_h))
         geom_anim.setEndValue(QRect(target_x, target_y, popup_w, popup_h))
         geom_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
@@ -1377,22 +1497,22 @@ class AppLauncherWidget(QWidget):
     def paintEvent(self, event):
         self.shadow_caster.setGeometry(0, 0, self.width(), self.height())
         from PyQt6.QtGui import QPainter, QPainterPath, QColor, QPen, QRadialGradient
-        from PyQt6.QtCore import QSettings
+        from config import load_config
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
         # Draw to window boundaries to match system DWM rounded borders exactly
         r = self.rect().adjusted(0, 0, -1, -1)
         
-        settings = QSettings("WaybarWin", "Settings")
-        style = settings.value("popup_style", "popup", type=str)
+        config = load_config()
+        style = config.get("style", {}).get("popup_style", "popup")
         is_light = (palette.get("name") == "Light")
         
         path = QPainterPath()
         path.addRoundedRect(r.x(), r.y(), r.width(), r.height(), 12, 12)
         
         if style in ["edgeBox", "edgeCurve"]:
-            painter.fillPath(path, QColor(0, 0, 0, 255)) # Opaque base
+            painter.fillPath(path, hex_to_qcolor(palette['capsule_bg'])) # Opaque base
             
             from theme import get_windows_accent_color
             r_c, g_c, b_c = get_windows_accent_color()
@@ -1627,11 +1747,48 @@ class AppLauncherTriggerWidget(QFrame):
         else:
             screen = self.window().screen().availableGeometry()
             w, h = self.launcher.width(), self.launcher.height()
-            target_x = screen.x() + (screen.width() - w) // 2
-            target_y = screen.y() + (screen.height() - h) // 2
+
+            from config import load_config
+            config = load_config()
+            position = config.get("general", {}).get("position", "top").lower()
+
+            if position == "left":
+                target_x = screen.left() + 8
+                target_y = screen.y() + (screen.height() - h) // 2
+                start_x = target_x - 15
+                start_y = target_y
+            elif position == "right":
+                target_x = screen.right() - 8 - w
+                target_y = screen.y() + (screen.height() - h) // 2
+                start_x = target_x + 15
+                start_y = target_y
+            elif position == "bottom":
+                target_y = screen.bottom() - 8 - h
+                target_x = screen.x() + (screen.width() - w) // 2
+                start_y = target_y + 15
+                start_x = target_x
+            else:
+                target_y = screen.top() + 8
+                target_x = screen.x() + (screen.width() - w) // 2
+                start_y = target_y - 15
+                start_x = target_x
+
+            if target_x + w > screen.right() - 10:
+                target_x = screen.right() - w - 10
+            if target_x < screen.left() + 10:
+                target_x = screen.left() + 10
+            if target_y + h > screen.bottom() - 10:
+                target_y = screen.bottom() - h - 10
+            if target_y < screen.top() + 10:
+                target_y = screen.top() + 10
+            
+            if position in ["left", "right"]:
+                start_y = target_y
+            else:
+                start_x = target_x
 
             self.launcher.setWindowOpacity(0.0)
-            self.launcher.setGeometry(target_x, target_y - 20, w, h)
+            self.launcher.setGeometry(start_x, start_y, w, h)
             self.launcher.show()
             self.launcher.raise_()
             self.launcher.activateWindow()
@@ -1643,7 +1800,7 @@ class AppLauncherTriggerWidget(QFrame):
 
             geom_anim = QPropertyAnimation(self.launcher, b"geometry")
             geom_anim.setDuration(250)
-            geom_anim.setStartValue(QRect(target_x, target_y - 20, w, h))
+            geom_anim.setStartValue(QRect(start_x, start_y, w, h))
             geom_anim.setEndValue(QRect(target_x, target_y, w, h))
             geom_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
@@ -1809,33 +1966,79 @@ def is_any_window_maximized_on_screen(self_hwnd):
 
 # ─── Main Window ──────────────────────────────────────────────────────────────
 
+
+class RotatedLabel(QLabel):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.angle = 90
+        
+    def paintEvent(self, event):
+        from PyQt6.QtGui import QPainter
+        painter = QPainter(self)
+        painter.translate(self.width() / 2, self.height() / 2)
+        painter.rotate(self.angle)
+        painter.translate(-self.height() / 2, -self.width() / 2)
+        # We need to draw the text manually because standard QLabel paintEvent doesn't respect painter transforms
+        painter.drawText(self.rect().transposed(), Qt.AlignmentFlag.AlignCenter, self.text())
+        painter.end()
+        
+    def sizeHint(self):
+        s = super().sizeHint()
+        from PyQt6.QtCore import QSize
+        return QSize(s.height(), s.width())
+        
+    def minimumSizeHint(self):
+        s = super().minimumSizeHint()
+        from PyQt6.QtCore import QSize
+        return QSize(s.height(), s.width())
+
 class CornerWidget(QWidget):
-    def __init__(self, parent=None, is_left=True):
+    def __init__(self, parent=None, mode="tl"):
         super().__init__(parent, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
-        self.is_left = is_left
+        self.mode = mode
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setFixedSize(12, 12)
+        
+    def set_mode(self, mode):
+        self.mode = mode
+        self.update()
+    
+    def showEvent(self, event):
+        import ctypes, struct
+        hwnd = int(self.winId())
+        # Match bar's DWM treatment: disable accent and round corners
+        val = ctypes.c_int(1)  # DWMWCP_DONOTROUND
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 33, ctypes.byref(val), ctypes.sizeof(val))
+        # ACCENT_DISABLED = 0
+        policy = struct.pack("IIII", 0, 0, 0, 0)
+        attrib_data = struct.pack("IPI", 19, ctypes.cast(ctypes.c_char_p(policy), ctypes.c_void_p).value, len(policy))
+        ctypes.windll.user32.SetWindowCompositionAttribute(hwnd, attrib_data)
+        super().showEvent(event)
         
     def paintEvent(self, event):
         from PyQt6.QtGui import QPainter, QPainterPath, QColor
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # Draw solid black square
-        painter.fillRect(0, 0, 12, 12, QColor(0, 0, 0, 255))
+        # Draw solid square
+        painter.fillRect(0, 0, 12, 12, hex_to_qcolor(palette['bg']))
         
-        # Switch to eraser mode and punch out the circle
+        # Punch out circle
         painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear)
         
         from PyQt6.QtCore import Qt
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(0, 0, 0, 255))
+        painter.setBrush(hex_to_qcolor(palette['bg']))
         
-        if self.is_left:
-            painter.drawEllipse(0, 0, 24, 24) # Center at (12, 12)
-        else:
-            painter.drawEllipse(-12, 0, 24, 24) # Center at (0, 12)
+        if self.mode == "tl":
+            painter.drawEllipse(0, 0, 24, 24)
+        elif self.mode == "tr":
+            painter.drawEllipse(-12, 0, 24, 24)
+        elif self.mode == "bl":
+            painter.drawEllipse(0, -12, 24, 24)
+        elif self.mode == "br":
+            painter.drawEllipse(-12, -12, 24, 24) # Center at (0, 12)
 
 class WaybarWindow(QMainWindow):
     display_toggled = pyqtSignal(str, bool)
@@ -1849,8 +2052,8 @@ class WaybarWindow(QMainWindow):
         self.current_brightness = 50
         self._last_max_state = None
         
-        self.left_corner = CornerWidget(self, is_left=True)
-        self.right_corner = CornerWidget(self, is_left=False)
+        self.left_corner = CornerWidget(self, mode="tl")
+        self.right_corner = CornerWidget(self, mode="tr")
         
         self.bar_anim = QPropertyAnimation(self, b"geometry")
         self.bar_anim.setDuration(250)
@@ -1883,9 +2086,9 @@ class WaybarWindow(QMainWindow):
         # Check if any window is maximized on this screen
         is_maximized = is_any_window_maximized_on_screen(self.winId())
         
-        from PyQt6.QtCore import QSettings
-        settings = QSettings("WaybarWin", "Settings")
-        popup_style = settings.value("popup_style", "popup", type=str)
+        from config import load_config
+        config = load_config()
+        popup_style = config.get("style", {}).get("popup_style", "popup")
         
         if popup_style in ["edgeBox", "edgeCurve"]:
             is_maximized = True
@@ -1948,14 +2151,26 @@ class WaybarWindow(QMainWindow):
             
         if hasattr(self, '_last_max_state') and self._last_max_state == is_maximized:
             # Failsafe: Windows or interrupted animations might leave a 1px gap. Enforce it!
+            from config import load_config
+            config = load_config()
+            position = config.get("general", {}).get("position", "top").lower()
+            
             if is_maximized:
-                expected_geo = QRect(geo.x(), geo.y(), geo.width(), self.bar_height)
+                if position == "left":
+                    expected_geo = QRect(geo.x(), geo.y(), 54, geo.height())
+                else:
+                    expected_geo = QRect(geo.x(), geo.y(), geo.width(), self.bar_height)
+                    
                 if self.geometry() != expected_geo:
                     self.setGeometry(expected_geo)
             else:
                 gap_x = 10
                 gap_y = 6
-                expected_geo = QRect(geo.x() + gap_x, geo.y() + gap_y, geo.width() - (gap_x * 2), self.bar_height)
+                if position == "left":
+                    expected_geo = QRect(geo.x() + gap_x, geo.y() + gap_y, 54, geo.height() - (gap_y * 2))
+                else:
+                    expected_geo = QRect(geo.x() + gap_x, geo.y() + gap_y, geo.width() - (gap_x * 2), self.bar_height)
+                    
                 if self.geometry() != expected_geo:
                     self.setGeometry(expected_geo)
             return
@@ -1964,26 +2179,63 @@ class WaybarWindow(QMainWindow):
         first_run = (self._last_max_state is None)
         self._last_max_state = is_maximized
         
+        from config import load_config
+        config = load_config()
+        position = config.get("general", {}).get("position", "top").lower()
+        is_vertical = position in ["left", "right"]
+
         if is_maximized:
             # Touch edges (no gap)
-            target_x = geo.x()
-            target_y = geo.y()
-            target_w = geo.width()
+            if position == "left":
+                target_x = geo.x()
+                target_y = geo.y()
+                target_w = self.bar_height
+                target_h = geo.height()
+            elif position == "right":
+                target_x = geo.x() + geo.width() - self.bar_height
+                target_y = geo.y()
+                target_w = self.bar_height
+                target_h = geo.height()
+            else:
+                target_x = geo.x()
+                target_y = geo.y()
+                target_w = geo.width()
+                target_h = self.bar_height
             
             # Corner radius 0 (DWMWCP_DONOTROUND = 1)
             val = ctypes.c_int(1)
             ctypes.windll.dwmapi.DwmSetWindowAttribute(int(self.winId()), 33, ctypes.byref(val), ctypes.sizeof(val))
             
-            self.appbar.height = self.bar_height
+            self.appbar.height = self.bar_height # Width is used in ABE_LEFT/RIGHT internally as height in AppBar API
             self.appbar.set_pos()
             
-            from PyQt6.QtCore import QSettings
-            settings = QSettings("WaybarWin", "Settings")
-            popup_style = settings.value("popup_style", "popup", type=str)
+            popup_style = config.get("style", {}).get("popup_style", "popup")
             
             if popup_style == "edgeCurve":
-                self.left_corner.setGeometry(target_x, target_y + self.bar_height, 12, 12)
-                self.right_corner.setGeometry(target_x + target_w - 12, target_y + self.bar_height, 12, 12)
+                if self.position == "top":
+                    self.left_corner.set_mode("tl")
+                    self.right_corner.set_mode("tr")
+                    self.left_corner.setGeometry(target_x, target_y + target_h, 12, 12)
+                    self.right_corner.setGeometry(target_x + target_w - 12, target_y + target_h, 12, 12)
+                elif self.position == "bottom":
+                    self.left_corner.set_mode("bl")
+                    self.right_corner.set_mode("br")
+                    self.left_corner.setGeometry(target_x, target_y - 12, 12, 12)
+                    self.right_corner.setGeometry(target_x + target_w - 12, target_y - 12, 12, 12)
+                elif self.position == "left":
+                    self.left_corner.set_mode("tl")
+                    self.right_corner.set_mode("bl")
+                    actual_w = self.geometry().width()
+                    self.left_corner.setGeometry(target_x + actual_w, target_y, 12, 12)
+                    self.right_corner.setGeometry(target_x + actual_w, target_y + target_h - 12, 12, 12)
+                elif self.position == "right":
+                    self.left_corner.set_mode("tr")
+                    self.right_corner.set_mode("br")
+                    actual_w = self.geometry().width()
+                    actual_x = self.geometry().x()
+                    self.left_corner.setGeometry(actual_x - 12, target_y, 12, 12)
+                    self.right_corner.setGeometry(actual_x - 12, target_y + target_h - 12, 12, 12)
+                
                 self.left_corner.show()
                 self.right_corner.show()
                 self.left_corner.raise_()
@@ -1993,10 +2245,10 @@ class WaybarWindow(QMainWindow):
                 self.right_corner.hide()
             
             if first_run:
-                self.setGeometry(target_x, target_y, target_w, self.bar_height)
+                self.setGeometry(target_x, target_y, target_w, target_h)
             else:
                 self.bar_anim.setStartValue(self.geometry())
-                self.bar_anim.setEndValue(QRect(target_x, target_y, target_w, self.bar_height))
+                self.bar_anim.setEndValue(QRect(target_x, target_y, target_w, target_h))
                 self.bar_anim.start()
         else:
             # Floating form (maintain gap)
@@ -2005,9 +2257,21 @@ class WaybarWindow(QMainWindow):
             
             gap_x = 10
             gap_y = 6
-            target_x = geo.x() + gap_x
-            target_y = geo.y() + gap_y
-            target_w = geo.width() - (gap_x * 2)
+            if position == "left":
+                target_x = geo.x() + gap_x
+                target_y = geo.y() + gap_y
+                target_w = self.bar_height
+                target_h = geo.height() - (gap_y * 2)
+            elif position == "right":
+                target_x = geo.x() + geo.width() - self.bar_height - gap_x
+                target_y = geo.y() + gap_y
+                target_w = self.bar_height
+                target_h = geo.height() - (gap_y * 2)
+            else:
+                target_x = geo.x() + gap_x
+                target_y = geo.y() + gap_y
+                target_w = geo.width() - (gap_x * 2)
+                target_h = self.bar_height
             
             # Corner radius rounded (DWMWCP_ROUND = 2)
             val = ctypes.c_int(2)
@@ -2017,10 +2281,10 @@ class WaybarWindow(QMainWindow):
             self.appbar.set_pos()
             
             if first_run:
-                self.setGeometry(target_x, target_y, target_w, self.bar_height)
+                self.setGeometry(target_x, target_y, target_w, target_h)
             else:
                 self.bar_anim.setStartValue(self.geometry())
-                self.bar_anim.setEndValue(QRect(target_x, target_y, target_w, self.bar_height))
+                self.bar_anim.setEndValue(QRect(target_x, target_y, target_w, target_h))
                 self.bar_anim.start()
 
     def init_ui(self):
@@ -2035,10 +2299,41 @@ class WaybarWindow(QMainWindow):
         central.setObjectName("main-window")
         self.setCentralWidget(central)
 
-        self.main_layout = QGridLayout(central)
-        self.main_layout.setContentsMargins(5, 0, 5, 0)
-
         config = load_config()
+        self.position = config.get("general", {}).get("position", "top").lower()
+        self.is_vertical = self.position in ["left", "right"]
+        
+        # We use a graphics view to rotate the entire bar if vertical
+        if self.is_vertical:
+            from PyQt6.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsProxyWidget
+            self.view = QGraphicsView(central)
+            self.view.setFrameShape(QFrame.Shape.NoFrame)
+            self.view.setStyleSheet("background: transparent;")
+            self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self.scene = QGraphicsScene(self.view)
+            self.view.setScene(self.scene)
+            
+            # The actual content widget
+            self.content_widget = QWidget()
+            self.proxy = self.scene.addWidget(self.content_widget)
+            
+            # Rotate proxy
+            if self.position == "left":
+                self.proxy.setRotation(-90)
+            elif self.position == "right":
+                self.proxy.setRotation(90)
+                
+            self.main_layout = QGridLayout(self.content_widget)
+            
+            view_layout = QVBoxLayout(central)
+            view_layout.setContentsMargins(0, 0, 0, 0)
+            view_layout.addWidget(self.view)
+        else:
+            self.main_layout = QGridLayout(central)
+            self.content_widget = central
+
+        self.main_layout.setContentsMargins(5, 0, 5, 0)
 
         # Widget mapping
         # Note: AppLauncher requires a bit of special handling because it has a trigger widget.
@@ -2058,6 +2353,8 @@ class WaybarWindow(QMainWindow):
         # Dynamically load modules function
         def populate_layout(layout, module_list):
             for mod_name in module_list:
+                if self.is_vertical and mod_name == "taskbar":
+                    continue
                 if mod_name in WIDGET_MAP:
                     widget_instance = WIDGET_MAP[mod_name]()
                     # Save reference dynamically so things like `self.modules_right.update_volume_status()` still work if it exists
@@ -2070,7 +2367,7 @@ class WaybarWindow(QMainWindow):
         left_layout = QHBoxLayout(left_container)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(15)
-        populate_layout(left_layout, config.get("modules-left", []))
+        populate_layout(left_layout, config.get("layout", {}).get("modules-left", []))
         left_layout.addStretch()
         self.main_layout.addWidget(left_container, 0, 0, alignment=Qt.AlignmentFlag.AlignLeft)
 
@@ -2079,7 +2376,7 @@ class WaybarWindow(QMainWindow):
         center_layout = QHBoxLayout(center_container)
         center_layout.setContentsMargins(0, 0, 0, 0)
         center_layout.setSpacing(5)
-        populate_layout(center_layout, config.get("modules-center", []))
+        populate_layout(center_layout, config.get("layout", {}).get("modules-center", []))
         self.main_layout.addWidget(center_container, 0, 1, alignment=Qt.AlignmentFlag.AlignCenter)
 
         # Right modules
@@ -2087,12 +2384,12 @@ class WaybarWindow(QMainWindow):
         right_layout = QHBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(10)
-        populate_layout(right_layout, config.get("modules-right", []))
+        populate_layout(right_layout, config.get("layout", {}).get("modules-right", []))
         self.main_layout.addWidget(right_container, 0, 2, alignment=Qt.AlignmentFlag.AlignRight)
 
     def contextMenuEvent(self, event):
-        from PyQt6.QtCore import QSettings
-        settings = QSettings("WaybarWin", "Settings")
+        from config import load_config, save_config
+        config = load_config()
         menu = QMenu(self)
         menu.setStyleSheet(f"""
             QMenu {{
@@ -2127,7 +2424,7 @@ class WaybarWindow(QMainWindow):
                 act.setChecked(True)
                 act.setEnabled(False)
             else:
-                act.setChecked(settings.value(f"displays/{name}", False, type=bool))
+                act.setChecked(name in config.get("displays", {}).get("enabled_monitors", []))
             display_actions.append((act, name))
 
         menu.addSeparator()
@@ -2135,12 +2432,12 @@ class WaybarWindow(QMainWindow):
         position_menu = menu.addMenu("Position")
         pos_top_act = position_menu.addAction("Top")
         pos_top_act.setCheckable(True)
-        pos_bottom_act = position_menu.addAction("Bottom")
-        pos_bottom_act.setCheckable(True)
+        pos_left_act = position_menu.addAction("Left")
+        pos_left_act.setCheckable(True)
         
-        current_pos = settings.value("position", "Top", type=str)
-        if current_pos == "Bottom":
-            pos_bottom_act.setChecked(True)
+        current_pos = config.get("general", {}).get("position", "top").title()
+        if current_pos == "Left":
+            pos_left_act.setChecked(True)
         else:
             pos_top_act.setChecked(True)
 
@@ -2152,7 +2449,7 @@ class WaybarWindow(QMainWindow):
         style_edgecurve_act = style_menu.addAction("edgeCurve")
         style_edgecurve_act.setCheckable(True)
         
-        current_style = settings.value("popup_style", "popup", type=str)
+        current_style = config.get("style", {}).get("popup_style", "popup")
         if current_style == "edgeBox":
             style_edgebox_act.setChecked(True)
         elif current_style == "edgeCurve":
@@ -2174,6 +2471,11 @@ class WaybarWindow(QMainWindow):
             startup_action.setChecked(False)
 
         menu.addSeparator()
+        
+        open_config_action = menu.addAction("Open Configuration")
+        restore_defaults_action = menu.addAction("Restore Defaults")
+
+        menu.addSeparator()
         quit_action = menu.addAction("Quit")
 
         chosen = menu.exec(event.globalPos())
@@ -2181,20 +2483,33 @@ class WaybarWindow(QMainWindow):
         if chosen in [a for a, _ in display_actions]:
             for a, name in display_actions:
                 if chosen == a:
-                    settings.setValue(f"displays/{name}", a.isChecked())
+                    displays = config.setdefault("displays", {})
+                    monitors = displays.setdefault("enabled_monitors", [])
+                    if a.isChecked() and name not in monitors:
+                        monitors.append(name)
+                    elif not a.isChecked() and name in monitors:
+                        monitors.remove(name)
+                    save_config(config)
                     self.display_toggled.emit(name, a.isChecked())
         elif chosen == pos_top_act:
-            settings.setValue("position", "Top")
-        elif chosen == pos_bottom_act:
-            settings.setValue("position", "Bottom")
+            config.setdefault("general", {})["position"] = "top"
+            save_config(config)
+            self.restart_app()
+        elif chosen == pos_left_act:
+            config.setdefault("general", {})["position"] = "left"
+            save_config(config)
+            self.restart_app()
         elif chosen == style_popup_act:
-            settings.setValue("popup_style", "popup")
+            config.setdefault("style", {})["popup_style"] = "popup"
+            save_config(config)
             self.apply_style_live()
         elif chosen == style_edgebox_act:
-            settings.setValue("popup_style", "edgeBox")
+            config.setdefault("style", {})["popup_style"] = "edgeBox"
+            save_config(config)
             self.apply_style_live()
         elif chosen == style_edgecurve_act:
-            settings.setValue("popup_style", "edgeCurve")
+            config.setdefault("style", {})["popup_style"] = "edgeCurve"
+            save_config(config)
             self.apply_style_live()
         elif chosen == startup_action:
             try:
@@ -2211,8 +2526,35 @@ class WaybarWindow(QMainWindow):
                 winreg.CloseKey(key)
             except OSError:
                 pass
+        elif chosen == open_config_action:
+            from config import CONFIG_FILE
+            import subprocess
+            if sys.platform == "win32":
+                os.startfile(CONFIG_FILE)
+            else:
+                subprocess.Popen(['xdg-open', CONFIG_FILE])
+        elif chosen == restore_defaults_action:
+            from config import restore_defaults
+            restore_defaults()
+            # Restart to apply defaults
+            import subprocess
+            if getattr(sys, "frozen", False):
+                subprocess.Popen([sys.executable])
+            else:
+                subprocess.Popen([sys.executable] + sys.argv)
+            QApplication.quit()
         elif chosen == quit_action:
             QApplication.quit()
+
+
+    def restart_app(self):
+        import subprocess
+        import sys
+        if getattr(sys, "frozen", False):
+            subprocess.Popen([sys.executable])
+        else:
+            subprocess.Popen([sys.executable] + sys.argv)
+        QApplication.quit()
 
     def apply_style_live(self):
         from theme import get_theme
@@ -2244,6 +2586,17 @@ class WaybarWindow(QMainWindow):
         is_light = (palette.get("name") == "Light")
         enable_acrylic_blur(self.winId(), is_light)
         super().showEvent(event)
+        
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'is_vertical') and self.is_vertical:
+            if self.position == "left":
+                self.content_widget.setFixedSize(self.height(), self.width())
+                self.proxy.setPos(0, self.height())
+            elif self.position == "right":
+                self.content_widget.setFixedSize(self.height(), self.width())
+                self.proxy.setPos(self.width(), 0)
+            self.scene.setSceneRect(0, 0, self.width(), self.height())
 
     def wheelEvent(self, event):
         x = event.position().x()

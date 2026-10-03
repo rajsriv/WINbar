@@ -72,7 +72,21 @@ class AppBar:
             abd.rc.top = self.y
             abd.rc.right = self.x + self.width
             abd.rc.bottom = self.y + self.height
-        # Add logic for other edges if needed
+        elif self.edge == ABE_BOTTOM:
+            abd.rc.left = self.x
+            abd.rc.top = self.y - self.height
+            abd.rc.right = self.x + self.width
+            abd.rc.bottom = self.y
+        elif self.edge == ABE_LEFT:
+            abd.rc.left = self.x
+            abd.rc.top = self.y
+            abd.rc.right = self.x + self.width
+            abd.rc.bottom = self.y + self.height
+        elif self.edge == ABE_RIGHT:
+            abd.rc.left = self.x - self.width
+            abd.rc.top = self.y
+            abd.rc.right = self.x
+            abd.rc.bottom = self.y + self.height
 
         # Query the system to adjust the rectangle to avoid overlapping
         shell32.SHAppBarMessage(ABM_QUERYPOS, ctypes.byref(abd))
@@ -80,6 +94,12 @@ class AppBar:
         # Update the rect after query
         if self.edge == ABE_TOP:
             abd.rc.bottom = abd.rc.top + self.height
+        elif self.edge == ABE_BOTTOM:
+            abd.rc.top = abd.rc.bottom - self.height
+        elif self.edge == ABE_LEFT:
+            abd.rc.right = abd.rc.left + self.width
+        elif self.edge == ABE_RIGHT:
+            abd.rc.left = abd.rc.right - self.width
 
         # Set the new position
         shell32.SHAppBarMessage(ABM_SETPOS, ctypes.byref(abd))
