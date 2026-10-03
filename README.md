@@ -14,6 +14,7 @@ An elegant, highly customizable, and fluid status bar for Windows inspired by Li
 ## ✨ Features
 
 *   **🧱 Native Windows AppBar Integration:** Registers with the Windows Shell (via `SHAppBarMessage`) to act as a desktop appbar. It docks at the top of the screen and automatically forces other windowed applications to respect its boundaries.
+*   **📐 Edge & Layout Versatility:** Fully supports positioning the bar at the `top`, `bottom`, and `left` edges of your screen. Side positions automatically rotate system modules to form a native vertical layout, and `edgeBox` styling ensures maximized apps perfectly snap to the bar without overlapping.
 *   **🌀 Acrylic & Aero Blur Effects:** Integrates with Windows composition APIs (`SetWindowCompositionAttribute`) to enable modern semi-transparent blur/acrylic effects for popups and menus.
 *   **💻 Virtual Desktop Workspaces:** Real-time tracking and switching of Windows 10/11 Virtual Desktops utilizing `pyvda`. Displays workspace indicators similar to iOS page dots.
 *   **🎵 Media Integration (SMTC):** Connects to Windows Global System Media Transport Controls (SMTC). Fetches real-time playback state, artist details, track title, and album art thumbnail. Includes an **interactive animated wave seekbar**!
